@@ -4,5 +4,5 @@ Parallel password cracker assignment for CSC-213 Operating Systems at Grinnell C
 Code below "provided code" section provided as part of assignment. All code above this line by Nate Williams. Code under "part A" written collaboratively by Nate Williams and Evan Holt. 
 
 ### Executing Code
-Brute-force a single password by passing the md5 hash as an argument:
+Brute-force a single password by passing the md5 hash as an argument:  
 ``./password-cracker single 8d5f88b71d679934fdcdaf2ab4af0812``
