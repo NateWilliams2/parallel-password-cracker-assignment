@@ -74,12 +74,22 @@ int crack_single_password(uint8_t* input_hash, char* output) {
 /********************* Parts B & C ************************/
 
 /**
+ * type to represent one node of linked-list of username/password pairs
+ */
+typedef struct node_t {
+  char* username;
+  uint8_t* password_hash;
+  char* password;
+  struct node_t* next;
+} node_t;
+
+/**
  * This struct is the root of the data structure that will hold users and hashed passwords.
  * This could be any type of data structure you choose: list, array, tree, hash table, etc.
  * Implement this data structure for part B of the lab.
  */
 typedef struct password_set {
-  // You will need to fill in fields here
+  node_t* head;
 } password_set_t;
 
 /**
@@ -89,7 +99,7 @@ typedef struct password_set {
  * \param passwords  A pointer to allocated memory that will hold a password set
  */
 void init_password_set(password_set_t* passwords) {
-  // TODO: Initialize any fields you add to your password set structure
+  passwords->head = NULL;
 }
 
 /**
@@ -105,7 +115,23 @@ void init_password_set(password_set_t* passwords) {
  *                        make a copy of this value if you retain it in your data structure.
  */
 void add_password(password_set_t* passwords, char* username, uint8_t* password_hash) {
-  // TODO: Add the provided user and password hash to your set of passwords
+  node_t* node_ptr = passwords->head;
+  // Special case for head of list
+  if (passwords->head == NULL){
+    passwords->head = (node_t*) malloc(sizeof(node_t*));
+    passwords->head->username = username;
+    passwords->head->password_hash = password_hash;
+    passwords->head->next = NULL;
+    node_ptr = passwords->head;
+  } else{
+    // Case for other elements of list
+      while (node_ptr -> next != NULL); // Loop to last element
+    // Allocate new node, append to list
+    node_ptr -> next = (node_t*)malloc(sizeof(node_t*));
+    node_ptr->next->username = username;
+    node_ptr->next->password_hash = password_hash;
+    node_ptr->next->next = NULL;
+  }
 }
 
 /**
