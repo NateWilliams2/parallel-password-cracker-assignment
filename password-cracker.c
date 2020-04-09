@@ -26,7 +26,10 @@ int check_hash_equal(char* candidate_passwd, uint8_t candidate_hash[], uint8_t* 
 
 // Recersive part of increment_string
 void increment_string_r(char string[], int index) {
-  if (index >= 6) return;
+  if (index >= 6){ // If all strings tried, signal end string
+    string[0] = '\0';
+    return;
+  }
   string[index]++;
 
   if (string[index] > 'z') {
@@ -54,7 +57,7 @@ int crack_single_password(uint8_t* input_hash, char* output) {
   uint8_t candidate_hash[MD5_DIGEST_LENGTH]; //< This will hold the hash of the candidate password
 
   // Exit loop once last valid password string is reached
-  while (strcmp(candidate_passwd, "zzzzzz") != 0){
+  while (candidate_passwd[0] != '\0'){
     if (check_hash_equal(candidate_passwd, candidate_hash, input_hash) == 0) {
       strncpy(output, candidate_passwd, PASSWORD_LENGTH+1);
       return 0;
@@ -64,10 +67,10 @@ int crack_single_password(uint8_t* input_hash, char* output) {
     }
   }
   //Check last string after exiting while loop
-  if (check_hash_equal(candidate_passwd, candidate_hash, input_hash) == 0) {
-    strncpy(output, candidate_passwd, PASSWORD_LENGTH+1);
-    return 0;
-  }
+  // if (check_hash_equal(candidate_passwd, candidate_hash, input_hash) == 0) {
+  //   strncpy(output, candidate_passwd, PASSWORD_LENGTH+1);
+  //   return 0;
+  // }
   return -1;
 }
 
@@ -78,8 +81,7 @@ int crack_single_password(uint8_t* input_hash, char* output) {
  */
 typedef struct node_t {
   char* username;
-  uint8_t* password_hash;
-  char* password;
+  uint8_t password_hash[MD5_DIGEST_LENGTH];
   struct node_t* next;
 } node_t;
 
@@ -115,23 +117,36 @@ void init_password_set(password_set_t* passwords) {
  *                        make a copy of this value if you retain it in your data structure.
  */
 void add_password(password_set_t* passwords, char* username, uint8_t* password_hash) {
-  node_t* node_ptr = passwords->head;
   // Special case for head of list
   if (passwords->head == NULL){
-    passwords->head = (node_t*) malloc(sizeof(node_t*));
-    passwords->head->username = username;
-    passwords->head->password_hash = password_hash;
+    passwords->head = (node_t*) malloc(sizeof(node_t));
+    passwords->head->username = (char*) malloc(sizeof(username));
+    strcpy(passwords->head->username, username);
+    memcpy(passwords->head->password_hash, password_hash, MD5_DIGEST_LENGTH);
     passwords->head->next = NULL;
-    node_ptr = passwords->head;
   } else{
+    node_t* node_ptr = passwords->head;
     // Case for other elements of list
-      while (node_ptr -> next != NULL); // Loop to last element
+      while (node_ptr -> next != NULL){
+        node_ptr = node_ptr->next;
+      }; // Loop to last element
     // Allocate new node, append to list
-    node_ptr -> next = (node_t*)malloc(sizeof(node_t*));
-    node_ptr->next->username = username;
-    node_ptr->next->password_hash = password_hash;
+    node_ptr -> next = (node_t*) malloc(sizeof(node_t));
+    node_ptr->next->username = (char*) malloc(sizeof(username));
+    strcpy(node_ptr->next->username, username);
+    memcpy(node_ptr->next->password_hash, password_hash, MD5_DIGEST_LENGTH);
     node_ptr->next->next = NULL;
   }
+}
+
+void remove_password(password_set_t* passwords, node_t* current, node_t* parent){
+  if(current == passwords->head){ // If on first element of list
+    passwords->head = current->next;
+  } else{
+    parent->next = current->next;
+  }
+  free(current->username);
+  free(current);
 }
 
 /**
@@ -142,9 +157,34 @@ void add_password(password_set_t* passwords, char* username, uint8_t* password_h
  * \returns The number of passwords cracked in the list
  */
 int crack_password_list(password_set_t* passwords) {
-  // TODO: Implement me!
+  char candidate_passwd[7] = {'a', 'a', 'a', 'a', 'a', 'a', '\0'}; //< This variable holds the password we are trying
+  uint8_t candidate_hash[MD5_DIGEST_LENGTH]; //< This will hold the hash of the candidate password
+  int num_cracked = 0; // Number of cracked passwords
 
-  return 0;
+  // Exit loop once last valid password string is reached and/or all passwords are found
+  while (candidate_passwd[0] != '\0' && passwords->head != NULL){
+    node_t* parent = passwords->head;
+    node_t* current = passwords->head;
+    MD5((unsigned char*)candidate_passwd, strlen(candidate_passwd), candidate_hash); //< Hash candidate password
+    while (current != NULL){ // Linear search through user list
+      if(memcmp(current->password_hash, candidate_hash, MD5_DIGEST_LENGTH) == 0) {
+        printf("%s %.6s\n", current->username, candidate_passwd);
+        node_t* temp = current->next;
+        remove_password(passwords, current, parent);
+        current = temp;
+        num_cracked++;
+      } else {
+        // If password not reached, move to next candidate
+        if(current != passwords->head){ // On head of list, parent is not really parent and should be offset by one entry
+          parent = current;
+        }
+        current = current->next; // Set current to next node
+      }
+    }
+    // After testing every candidate, check next password
+    increment_string(candidate_passwd);
+  }
+  return num_cracked;
 }
 
 /******************** Provided Code ***********************/
