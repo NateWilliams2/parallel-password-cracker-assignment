@@ -5,9 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define MAX_USERNAME_LENGTH 64
 #define PASSWORD_LENGTH 6
+#define NUM_THREADS 4
+
+pthread_rwlock_t rw_init = PTHREAD_RWLOCK_INITIALIZER;
+pthread_rwlock_t *rwlock = &rw_init;
 
 /************************* Part A *************************/
 /********************* Parts B & C ************************/
@@ -27,7 +32,7 @@ int check_hash_equal(char* candidate_passwd, uint8_t candidate_hash[], uint8_t* 
 // Recersive part of increment_string
 void increment_string_r(char string[], int index) {
   if (index >= 6){ // If all strings tried, signal end string
-    string[0] = '\0';
+    string[5] = '\0';
     return;
   }
   string[index]++;
@@ -57,7 +62,7 @@ int crack_single_password(uint8_t* input_hash, char* output) {
   uint8_t candidate_hash[MD5_DIGEST_LENGTH]; //< This will hold the hash of the candidate password
 
   // Exit loop once last valid password string is reached
-  while (candidate_passwd[0] != '\0'){
+  while (candidate_passwd[5] != '\0'){
     if (check_hash_equal(candidate_passwd, candidate_hash, input_hash) == 0) {
       strncpy(output, candidate_passwd, PASSWORD_LENGTH+1);
       return 0;
@@ -95,6 +100,14 @@ typedef struct password_set {
 } password_set_t;
 
 /**
+ * This struct holds arguments for worker threads
+ */
+typedef struct myarg {
+  password_set_t* passwords;
+  int sect;
+} myarg_t;
+
+/**
  * Initialize a password set.
  * Complete this implementation for part B of the lab.
  *
@@ -120,7 +133,9 @@ void add_password(password_set_t* passwords, char* username, uint8_t* password_h
   // Special case for head of list
   if (passwords->head == NULL){
     passwords->head = (node_t*) malloc(sizeof(node_t));
+    if(passwords->head == NULL) perror("Could not allocate space for head");
     passwords->head->username = (char*) malloc(sizeof(username));
+    if(passwords->head->username == NULL) perror("Could not allocate space for username");
     strcpy(passwords->head->username, username);
     memcpy(passwords->head->password_hash, password_hash, MD5_DIGEST_LENGTH);
     passwords->head->next = NULL;
@@ -132,22 +147,83 @@ void add_password(password_set_t* passwords, char* username, uint8_t* password_h
       }; // Loop to last element
     // Allocate new node, append to list
     node_ptr -> next = (node_t*) malloc(sizeof(node_t));
+    if(node_ptr->next == NULL) perror("Could not allocate space for next");
     node_ptr->next->username = (char*) malloc(sizeof(username));
+    if(node_ptr->next->username == NULL) perror("Could not allocate space for username");
     strcpy(node_ptr->next->username, username);
     memcpy(node_ptr->next->password_hash, password_hash, MD5_DIGEST_LENGTH);
     node_ptr->next->next = NULL;
   }
 }
 
-void remove_password(password_set_t* passwords, node_t* current, node_t* parent){
+void remove_password(password_set_t* passwords, node_t* current){
   if(current == passwords->head){ // If on first element of list
     passwords->head = current->next;
-  } else{
+  } else{ // Else loop through to find first node and set its next ptr
+    node_t* parent = passwords->head;
+    while(parent->next != current) parent = parent->next;
     parent->next = current->next;
   }
   free(current->username);
   free(current);
 }
+
+/*
+ * Worker function to crack a secment of valid candidate passwords and compare their hashes to list of hashes
+ *
+ */
+void* worker_crack_list(void* arg){
+  myarg_t *m = (myarg_t*) arg;
+  char candidate_passwd[7] = {'a', 'a', 'a', 'a', 'a', 'a', '\0'}; //< This variable holds the password we are trying
+  uint8_t candidate_hash[MD5_DIGEST_LENGTH]; //< This will hold the hash of the candidate password
+  int* num_cracked = malloc(sizeof(int));
+  if(num_cracked == NULL) perror("Could not allocate space for num_cracked");
+  float sect_len = (float)26/NUM_THREADS;
+  long int num_tried = 0;
+
+  // Manually loop through 1/NUM_THREADS of first-character values of candidate, determined by sect number.
+  for(candidate_passwd[0] = ('a' + (sect_len * m->sect)); candidate_passwd[0] < ('a' + (sect_len*(m->sect+1))); candidate_passwd[0]++){
+    strncpy(candidate_passwd+1, "aaaaa", PASSWORD_LENGTH); // Reset all chars but first
+
+    // Exit loop once last valid password string is reached and/or all passwords are found
+    // While statement read-locks list
+    while (candidate_passwd[5] != '\0'){
+      MD5((unsigned char*)candidate_passwd, strlen(candidate_passwd), candidate_hash); //< Hash candidate password
+      if(pthread_rwlock_rdlock(rwlock) != 0) perror("Could not acquire readlock"); // Acquire readlock for loop
+      if(m->passwords->head == NULL) { // If head is null, all passwords are found. unlcok and return.
+        if(pthread_rwlock_unlock(rwlock) != 0) perror("Could not unlock readlock");
+        pthread_exit(num_cracked);
+      }
+      num_tried++;
+      node_t* current = m->passwords->head;
+      while (current != NULL){ // Linear search through user list
+        if(memcmp(current->password_hash, candidate_hash, MD5_DIGEST_LENGTH) == 0) {
+          printf("%s %.6s\n", current->username, candidate_passwd);
+          node_t* temp = current->next;
+          if(pthread_rwlock_unlock(rwlock) != 0) perror("Could not unlock readlock");
+          if(pthread_rwlock_wrlock(rwlock) != 0) perror("Could not acquire writelock");
+          // A thread can reach this line directly after another thread removes a list node. Because remove_password
+          // finds its own parent, however, and current cannot be equal to another thread's removed node, this function
+          // can be treated as atomic.
+          remove_password(m->passwords, current);
+          if(pthread_rwlock_unlock(rwlock) != 0) perror("Could not unlock writelock");
+          if(pthread_rwlock_rdlock(rwlock) != 0) perror("Could not acquire readlock");
+          current = temp;
+          (*num_cracked)++;
+        } else {
+          // If password not reached, move to next candidate
+          current = current->next; // Set current to next node
+        }
+      }
+      // After testing every candidate, check next password
+      increment_string_r(candidate_passwd, 1); // Recursive increment from second character
+      // Finally, unlock readlock to refresh list before next password attempt
+      if(pthread_rwlock_unlock(rwlock) != 0) perror("Could not unlock readlock");
+    }
+  }
+  pthread_exit(num_cracked);
+}
+
 
 /**
  * Crack all of the passwords in a set of passwords. The function should print the username
@@ -156,36 +232,53 @@ void remove_password(password_set_t* passwords, node_t* current, node_t* parent)
  *
  * \returns The number of passwords cracked in the list
  */
-int crack_password_list(password_set_t* passwords) {
-  char candidate_passwd[7] = {'a', 'a', 'a', 'a', 'a', 'a', '\0'}; //< This variable holds the password we are trying
-  uint8_t candidate_hash[MD5_DIGEST_LENGTH]; //< This will hold the hash of the candidate password
-  int num_cracked = 0; // Number of cracked passwords
-
-  // Exit loop once last valid password string is reached and/or all passwords are found
-  while (candidate_passwd[0] != '\0' && passwords->head != NULL){
-    node_t* parent = passwords->head;
-    node_t* current = passwords->head;
-    MD5((unsigned char*)candidate_passwd, strlen(candidate_passwd), candidate_hash); //< Hash candidate password
-    while (current != NULL){ // Linear search through user list
-      if(memcmp(current->password_hash, candidate_hash, MD5_DIGEST_LENGTH) == 0) {
-        printf("%s %.6s\n", current->username, candidate_passwd);
-        node_t* temp = current->next;
-        remove_password(passwords, current, parent);
-        current = temp;
-        num_cracked++;
-      } else {
-        // If password not reached, move to next candidate
-        if(current != passwords->head){ // On head of list, parent is not really parent and should be offset by one entry
-          parent = current;
-        }
-        current = current->next; // Set current to next node
-      }
-    }
-    // After testing every candidate, check next password
-    increment_string(candidate_passwd);
-  }
-  return num_cracked;
-}
+ int crack_password_list(password_set_t* passwords) {
+   int num_cracked = 0;
+   pthread_t workers[NUM_THREADS];
+   myarg_t args[NUM_THREADS];
+   if(pthread_rwlock_init(rwlock, NULL) != 0) perror("Cannot initialize lock");
+   for(int i = 0; i < NUM_THREADS; i++){
+     args[i].passwords = passwords;
+     args[i].sect = i;
+     if(pthread_create(&workers[i], NULL, worker_crack_list, &args[i]) != 0) perror("Could not create thread");
+   }
+   for(int i=0; i < NUM_THREADS; i++){
+     void* return_val;
+     if(pthread_join(workers[i], &return_val) != 0) perror("Could not join thread");
+     num_cracked += *(int*)return_val;
+   }
+   return num_cracked;
+ }
+// int crack_password_list(password_set_t* passwords) {
+//   char candidate_passwd[7] = {'a', 'a', 'a', 'a', 'a', 'a', '\0'}; //< This variable holds the password we are trying
+//   uint8_t candidate_hash[MD5_DIGEST_LENGTH]; //< This will hold the hash of the candidate password
+//   int num_cracked = 0; // Number of cracked passwords
+//
+//   // Exit loop once last valid password string is reached and/or all passwords are found
+//   while (candidate_passwd[5] != '\0' && passwords->head != NULL){
+//     node_t* parent = passwords->head;
+//     node_t* current = passwords->head;
+//     MD5((unsigned char*)candidate_passwd, strlen(candidate_passwd), candidate_hash); //< Hash candidate password
+//     while (current != NULL){ // Linear search through user list
+//       if(memcmp(current->password_hash, candidate_hash, MD5_DIGEST_LENGTH) == 0) {
+//         printf("%s %.6s\n", current->username, candidate_passwd);
+//         node_t* temp = current->next;
+//         remove_password(passwords, current, parent);
+//         current = temp;
+//         num_cracked++;
+//       } else {
+//         // If password not reached, move to next candidate
+//         if(current != passwords->head){ // On head of list, parent is not really parent and should be offset by one entry
+//           parent = current;
+//         }
+//         current = current->next; // Set current to next node
+//       }
+//     }
+//     // After testing every candidate, check next password
+//     increment_string(candidate_passwd);
+//   }
+//   return num_cracked;
+// }
 
 /******************** Provided Code ***********************/
 
