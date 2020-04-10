@@ -249,36 +249,6 @@ void* worker_crack_list(void* arg){
    }
    return num_cracked;
  }
-// int crack_password_list(password_set_t* passwords) {
-//   char candidate_passwd[7] = {'a', 'a', 'a', 'a', 'a', 'a', '\0'}; //< This variable holds the password we are trying
-//   uint8_t candidate_hash[MD5_DIGEST_LENGTH]; //< This will hold the hash of the candidate password
-//   int num_cracked = 0; // Number of cracked passwords
-//
-//   // Exit loop once last valid password string is reached and/or all passwords are found
-//   while (candidate_passwd[5] != '\0' && passwords->head != NULL){
-//     node_t* parent = passwords->head;
-//     node_t* current = passwords->head;
-//     MD5((unsigned char*)candidate_passwd, strlen(candidate_passwd), candidate_hash); //< Hash candidate password
-//     while (current != NULL){ // Linear search through user list
-//       if(memcmp(current->password_hash, candidate_hash, MD5_DIGEST_LENGTH) == 0) {
-//         printf("%s %.6s\n", current->username, candidate_passwd);
-//         node_t* temp = current->next;
-//         remove_password(passwords, current, parent);
-//         current = temp;
-//         num_cracked++;
-//       } else {
-//         // If password not reached, move to next candidate
-//         if(current != passwords->head){ // On head of list, parent is not really parent and should be offset by one entry
-//           parent = current;
-//         }
-//         current = current->next; // Set current to next node
-//       }
-//     }
-//     // After testing every candidate, check next password
-//     increment_string(candidate_passwd);
-//   }
-//   return num_cracked;
-// }
 
 /******************** Provided Code ***********************/
 
